@@ -3,7 +3,6 @@ from __future__ import division
 from __future__ import print_function
 
 import _init_paths
-
 import os
 import cv2
 import json
@@ -11,6 +10,8 @@ import copy
 import numpy as np
 from opts import opts
 from detector import Detector
+print('*'*10, os.getcwd())
+
 
 image_ext = ['jpg', 'jpeg', 'png', 'webp']
 video_ext = ['mp4', 'mov', 'avi', 'mkv']
@@ -69,7 +70,7 @@ def demo(opt):
             print(time_str)
             if opt.save_video:
                 out.write(ret['generic'])
-            if cv2.waitKey(1) == 27:
+            if cv2.waitKey(0) == 27:
                 print('EXIT!')
                 save_and_exit(opt, out, results, out_name)
                 return  # esc to quit
