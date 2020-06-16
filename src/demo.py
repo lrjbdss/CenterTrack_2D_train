@@ -27,12 +27,13 @@ def demo(opt):
             opt.demo[opt.demo.rfind('.') + 1:].lower() in video_ext:
         cam = cv2.VideoCapture(0 if opt.demo == 'webcam' else opt.demo)
         out = None
-        out_name = opt.demo[opt.demo.rfind('/') + 1:]
+        out_name = opt.demo[opt.demo.rfind('/') + 1:].split('.')[-2] + '.avi'
         if opt.save_video:
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            out = cv2.VideoWriter('../results/{}.mp4'.format(
-                opt.exp_id + '_' + out_name), fourcc, opt.save_framerate, (
-                opt.video_w, opt.video_h))
+            h = int(cam.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            w = int(cam.get(cv2.CAP_PROP_FRAME_WIDTH))
+            fourcc = cv2.VideoWriter_fourcc(*'MP42')
+            out = cv2.VideoWriter('../results/{}'.format(
+                out_name), fourcc, opt.save_framerate, (w, h))
         detector.pause = False
         cnt = 0
         results = {}
@@ -41,6 +42,8 @@ def demo(opt):
         while True:
             cnt += 1
             _, img = cam.read()
+            _, img = cam.read()
+            # _, img = cam.read()
             if opt.resize_video:
                 try:
                     img = cv2.resize(img, (opt.video_w, opt.video_h))
@@ -49,11 +52,13 @@ def demo(opt):
                     save_and_exit(opt, out, results, out_name)
             if cnt < opt.skip_first:
                 continue
-            try:
-                cv2.imshow('input', img)
-            except:
-                print('FINISH!')
+            if img is None:
                 save_and_exit(opt, out, results, out_name)
+            # try:
+            #     cv2.imshow('input', img)
+            # except:
+            #     print('FINISH!')
+            #     save_and_exit(opt, out, results, out_name)
             input_meta = {'pre_dets': []}
             img_id_str = '{}'.format(cnt)
             if opt.load_results:
@@ -65,7 +70,7 @@ def demo(opt):
             ret = detector.run(img, input_meta)
             time_str = 'frame {} |'.format(cnt)
             for stat in time_stats:
-                time_str = time_str + '{} {:.3f}s |'.format(stat, ret[stat])
+                time_str = time_str + '{} {:.5f}s |'.format(stat, ret[stat])
             results[cnt] = ret['results']
             print(time_str)
             if opt.save_video:

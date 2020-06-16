@@ -10,6 +10,7 @@ import os
 from .networks.dla import DLASeg
 from .networks.resdcn import PoseResDCN
 from .networks.resnet import PoseResNet
+from .networks.resnest import ResNeSt
 from .networks.dlav0 import DLASegv0
 from .networks.generic_network import GenericNetwork
 
@@ -17,13 +18,14 @@ _network_factory = {
     'resdcn': PoseResDCN,
     'dla': DLASeg,
     'res': PoseResNet,
+    'resnest': ResNeSt,
     'dlav0': DLASegv0,
     'generic': GenericNetwork
 }
 
 
 def create_model(arch, head, head_conv, opt=None):
-    num_layers = int(arch[arch.find('_') + 1:]) if '_' in arch else 0
+    num_layers = int(arch[arch.find('_') + 1:]) if '_' in arch else [3, 4, 6, 3]
     arch = arch[:arch.find('_')] if '_' in arch else arch
     model_class = _network_factory[arch]
     model = model_class(num_layers, heads=head, head_convs=head_conv, opt=opt)

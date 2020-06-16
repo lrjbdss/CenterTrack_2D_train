@@ -10,6 +10,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+from abc import ABC
 
 import torch
 import torch.nn as nn
@@ -25,6 +26,7 @@ model_urls = {
     'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
+
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -104,54 +106,97 @@ class Bottleneck(nn.Module):
 
         return out
 
+
 resnet_spec = {18: (BasicBlock, [2, 2, 2, 2]),
                34: (BasicBlock, [3, 4, 6, 3]),
                50: (Bottleneck, [3, 4, 6, 3]),
                101: (Bottleneck, [3, 4, 23, 3]),
                152: (Bottleneck, [3, 8, 36, 3])}
 
-class PoseResNet(nn.Module):
 
-    def __init__(self, num_layers, heads, head_convs, _):
-        super(PoseResNet, self).__init__(heads, head_convs, 1, 64)
+# class PoseResNet(nn.Module):
+class PoseResNet(BaseModel):
+
+    def __init__(self, num_layers, heads, head_convs, opt):
+        # super(PoseResNet, self).__init__()
+        super(PoseResNet, self).__init__(heads, head_convs, 1, 64, opt)
         block, layers = resnet_spec[num_layers]
         self.inplanes = 64
         self.deconv_with_bias = False
         self.heads = heads
 
-        super(PoseResNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
-        self.bn1 = nn.BatchNorm2d(64, momentum=BN_MOMENTUM)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # super(PoseResNet, self).__init__()
+        self.base_layer = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=7, stride=2,
+                      padding=3, bias=False),
+            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True))
+        self.down_sample = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=3, stride=2,
+                      padding=1, bias=False),
+            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True))
+        # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=True)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
+        if opt.pre_img:
+            self.pre_img_layer = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=7, stride=2,
+                          padding=3, bias=False),
+                nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+                nn.ReLU(inplace=True))
+        if opt.pre_hm:
+            self.pre_hm_layer = nn.Sequential(
+                nn.Conv2d(1, 64, kernel_size=7, stride=2,
+                          padding=3, bias=False),
+                nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+                nn.ReLU(inplace=True))
+
         # used for deconv layers
         self.deconv_layers = self._make_deconv_layer(
             3,
-            [256, 256, 256],
+            [256, 128, 64],
             [4, 4, 4],
         )
 
         self.init_weights(num_layers, pretrained=True)
 
-    def img2feats(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
+    # def img2feats(self, x):
+    #     # x = self.conv1(x)
+    #     # x = self.bn1(x)
+    #     # x = self.relu(x)
+    #     # x = self.maxpool(x)
+    #
+    #     x = self.layer1(x)
+    #     x = self.layer2(x)
+    #     x = self.layer3(x)
+    #     x = self.layer4(x)
+    #
+    #     x = self.deconv_layers(x)
+    #     return [x]
 
+    def forward(self, x, pre_img=None, pre_hm=None):
+        x = self.base_layer(x)
+        if pre_img is not None:
+            x = x + self.pre_img_layer(pre_img)
+        if pre_hm is not None:
+            x = x + self.pre_hm_layer(pre_hm)
+        x = self.down_sample(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-
         x = self.deconv_layers(x)
-        return [x]
+
+        z = {}
+        for head in self.heads:
+            z[head] = self.__getattr__(head)(x)
+        # out.append(z)
+
+        return [z]
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -227,19 +272,19 @@ class PoseResNet(nn.Module):
                     nn.init.constant_(m.bias, 0)
             # print('=> init final conv weights from normal distribution')
             for head in self.heads:
-              final_layer = self.__getattr__(head)
-              for i, m in enumerate(final_layer.modules()):
-                  if isinstance(m, nn.Conv2d):
-                      # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                      # print('=> init {}.weight as normal(0, 0.001)'.format(name))
-                      # print('=> init {}.bias as 0'.format(name))
-                      if m.weight.shape[0] == self.heads[head]:
-                          if 'hm' in head:
-                              nn.init.constant_(m.bias, -2.19)
-                          else:
-                              nn.init.normal_(m.weight, std=0.001)
-                              nn.init.constant_(m.bias, 0)
-            #pretrained_state_dict = torch.load(pretrained)
+                final_layer = self.__getattr__(head)
+                for i, m in enumerate(final_layer.modules()):
+                    if isinstance(m, nn.Conv2d):
+                        # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                        # print('=> init {}.weight as normal(0, 0.001)'.format(name))
+                        # print('=> init {}.bias as 0'.format(name))
+                        if m.weight.shape[0] == self.heads[head]:
+                            if 'hm' in head:
+                                nn.init.constant_(m.bias, -2.19)
+                            else:
+                                nn.init.normal_(m.weight, std=0.001)
+                                nn.init.constant_(m.bias, 0)
+            # pretrained_state_dict = torch.load(pretrained)
             url = model_urls['resnet{}'.format(num_layers)]
             pretrained_state_dict = model_zoo.load_url(url)
             print('=> loading pretrained model {}'.format(url))
@@ -248,5 +293,3 @@ class PoseResNet(nn.Module):
             print('=> imagenet pretrained model dose not exist')
             print('=> please download it first')
             raise ValueError('imagenet pretrained model does not exist')
-
-

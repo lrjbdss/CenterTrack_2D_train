@@ -121,9 +121,52 @@ class RegWeightedL1Loss(nn.Module):
   def forward(self, output, mask, ind, target):
     pred = _tranpose_and_gather_feat(output, ind)
     # loss = F.l1_loss(pred * mask, target * mask, reduction='elementwise_mean')
-    loss = F.l1_loss(pred * mask, target * mask, reduction='sum')
+    loss = F.smooth_l1_loss(pred * mask, target * mask, reduction='sum')
     loss = loss / (mask.sum() + 1e-4)
     return loss
+
+
+class CIouLoss(nn.Module):
+    def __init__(self):
+        super(CIouLoss, self).__init__()
+
+    def forward(self, reg, wh, mask, ind, target_reg, target_wh):
+        num_pos = mask.sum() / 2
+        pred_reg = _tranpose_and_gather_feat(reg, ind)*mask
+        pred_wh = _tranpose_and_gather_feat(wh, ind)*mask
+
+        # cal the box's area of boxes1 and boxess
+        pred_Area = pred_wh[..., 0]*pred_wh[..., 1]
+        target_Area = target_wh[..., 0]*target_wh[..., 1]
+
+        # cal Intersection
+        left_up = torch.max(pred_reg-0.5*pred_wh, target_reg-0.5*target_wh)
+        right_down = torch.min(pred_reg+0.5*pred_wh, target_reg+0.5*target_wh)
+
+        inter_section = torch.clamp(right_down - left_up, 0.0)
+        inter_area = inter_section[..., 0] * inter_section[..., 1]
+        union_area = pred_Area + target_Area - inter_area
+        delta = 1e-10
+        ious = (inter_area+delta) / (union_area+delta)
+
+        # cal outer boxes
+        outer_left_up = torch.min(pred_reg-0.5*pred_wh, target_reg-0.5*target_wh)
+        outer_right_down = torch.max(pred_reg+0.5*pred_wh, target_reg+0.5*target_wh)
+        outer_diagonal_line = torch.pow(outer_right_down - outer_left_up, 2).sum(-1)
+
+        # cal center distance
+        center_dis = torch.abs(pred_reg - target_reg).pow(2).sum(-1)
+
+        # cal penalty term
+        # cal width,height
+        v = 0.4052847 * torch.pow(
+                torch.atan(pred_wh[..., 0] / (pred_wh[..., 1]+delta)) -
+                torch.atan(target_wh[..., 0] / (target_wh[..., 1]+delta)), 2)
+        alpha = v / (1 - ious + v+delta)
+
+        # cal ciou
+        cious = ious - center_dis / (outer_diagonal_line + alpha * v + delta)
+        return (1 - cious).sum() / num_pos
 
 
 class WeightedBCELoss(nn.Module):

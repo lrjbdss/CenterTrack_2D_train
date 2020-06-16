@@ -126,10 +126,10 @@ class Debugger(object):
             c = (255 - tango_color_dark[cat][0][0]).tolist()
         if conf >= 1:
             ID = int(conf) if not self.opt.not_show_number else ''
-            txt = '{}{}'.format(self.names[cat], ID)
+            txt = '{}{}'.format('vehicle_', ID)
         else:
             txt = '{}{:.1f}'.format(self.names[cat], conf)
-        thickness = 2
+        thickness = 1
         fontsize = 0.8 if self.opt.qualitative else 0.5
         if self.opt.show_track_color:
             track_id = int(conf)
@@ -182,6 +182,7 @@ class Debugger(object):
 
     def show_all_imgs(self, pause=False, Time=0):
         if 1:
+            # cv2.imshow('generic', self.imgs['generic'])
             for i, v in self.imgs.items():
                 cv2.imshow('{}'.format(i), v)
             if not self.with_3d:

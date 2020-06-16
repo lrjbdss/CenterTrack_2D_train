@@ -19,6 +19,7 @@ from utils.post_process import generic_post_process
 from utils.debugger import Debugger
 from utils.tracker import Tracker
 from dataset.dataset_factory import get_dataset
+# import pytorch_to_caffe
 
 
 class Detector(object):
@@ -34,6 +35,12 @@ class Detector(object):
         self.model = load_model(self.model, opt.load_model, opt)
         self.model = self.model.to(opt.device)
         self.model.eval()
+        # inp = (torch.ones([1, 3, 320, 320]).cuda(),
+        #        torch.ones([1, 3, 320, 320]).cuda(),
+        #        torch.ones([1, 1, 320, 320]).cuda())
+        # pytorch_to_caffe.trans_net(self.model, inp, 'res18')
+        # pytorch_to_caffe.save_prototxt('{}.prototxt'.format('res18'))
+        # pytorch_to_caffe.save_caffemodel('{}.caffemodel'.format('res18'))
 
         self.opt = opt
         self.trained_dataset = get_dataset(opt.dataset)
@@ -131,6 +138,11 @@ class Detector(object):
         tot_time += tracking_time - start_time
 
         if self.opt.debug >= 1:
+            cv2.putText(image, str(self.cnt), (450, 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), thickness=1, lineType=cv2.LINE_AA)
+            cv2.putText(image, str(self.tracker.id_count), (550, 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), thickness=1, lineType=cv2.LINE_AA)
+
             self.show_results(self.debugger, image, results)
         self.cnt += 1
 
@@ -400,6 +412,7 @@ class Detector(object):
             debugger.save_all_imgs(self.opt.debug_dir, prefix='{}'.format(self.cnt))
         else:
             debugger.show_all_imgs(pause=self.pause)
+            # pass
 
     def reset_tracking(self):
         self.tracker.reset()
