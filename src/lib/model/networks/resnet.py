@@ -136,7 +136,7 @@ class PoseResNet(BaseModel):
         #               padding=1, bias=False),
         #     nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
         #     nn.ReLU(inplace=True))
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=False)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=True)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)

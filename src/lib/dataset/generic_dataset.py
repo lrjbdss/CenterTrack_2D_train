@@ -44,7 +44,9 @@ class GenericDataset(data.Dataset):
              [12, 14], [14, 16], [11, 13], [13, 15]]
     mean = np.array([0.40789654, 0.44719302, 0.47026115],
                     dtype=np.float32).reshape(1, 1, 3)
-    std = np.array([0.28863828, 0.27408164, 0.27809835],
+    # std = np.array([0.28863828, 0.27408164, 0.27809835],
+    #                dtype=np.float32).reshape(1, 1, 3)
+    std = np.array([0.279, 0.279, 0.279],
                    dtype=np.float32).reshape(1, 1, 3)
     _eig_val = np.array([0.2141788, 0.01817699, 0.00341571],
                         dtype=np.float32)
