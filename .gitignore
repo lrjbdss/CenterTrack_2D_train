@@ -1,3 +1,5 @@
+videos
+nuscenes-devkit
 *.zip
 centernet_models/*
 centertrack_models/*

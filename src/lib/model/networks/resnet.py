@@ -131,12 +131,12 @@ class PoseResNet(BaseModel):
                       padding=3, bias=False),
             nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
             nn.ReLU(inplace=True))
-        self.down_sample = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, stride=2,
-                      padding=1, bias=False),
-            nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
-            nn.ReLU(inplace=True))
-        # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=True)
+        # self.down_sample = nn.Sequential(
+        #     nn.Conv2d(64, 64, kernel_size=3, stride=2,
+        #               padding=1, bias=False),
+        #     nn.BatchNorm2d(64, momentum=BN_MOMENTUM),
+        #     nn.ReLU(inplace=True))
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=False)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
@@ -162,7 +162,7 @@ class PoseResNet(BaseModel):
             [4, 4, 4],
         )
 
-        self.init_weights(num_layers, pretrained=True)
+        # self.init_weights(num_layers, pretrained=True)
 
     # def img2feats(self, x):
     #     # x = self.conv1(x)
@@ -184,7 +184,7 @@ class PoseResNet(BaseModel):
             x = x + self.pre_img_layer(pre_img)
         if pre_hm is not None:
             x = x + self.pre_hm_layer(pre_hm)
-        x = self.down_sample(x)
+        x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)

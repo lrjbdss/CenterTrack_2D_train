@@ -17,6 +17,7 @@ from utils.image import flip, color_aug
 from utils.image import get_affine_transform, affine_transform
 from utils.image import gaussian_radius, draw_umich_gaussian
 import copy
+import random
 
 
 def rand(a=0., b=1.):
@@ -79,7 +80,151 @@ class GenericDataset(data.Dataset):
 
             self.img_dir = img_dir
 
-    def __getitem__(self, index):
+    def _mosaic(self, img_list, anns_list):
+        assert len(img_list) == len(anns_list) == 4, "_mosaic func input four images."
+        anns_list = copy.deepcopy(anns_list)
+        sw, sh = self.opt.input_w, self.opt.input_h
+        xc, yc = int(random.uniform(sw * 0.3, sw * 0.7)), int(random.uniform(sh * 0.3, sh * 0.7))
+        img4 = np.full((sw, sh, 3), 0, dtype=np.uint8)  # base image with 4 tiles
+        img4_anns, track_ids, centers = [], [], []
+        for i in range(4):
+            img = img_list[i]
+            ori_h, ori_w, c = img.shape
+            w = int(random.uniform(0.5 * self.opt.input_w, 0.8 * self.opt.input_w))
+            scale = w / ori_w
+            h = int(scale * ori_h)
+            img_resized = cv2.resize(img, (w, h))
+            if i == 0:  # top left
+                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
+            elif i == 1:  # top right
+                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, sw), yc
+                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+            elif i == 2:  # bottom left
+                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(sh, yc + h)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, max(xc, w), min(y2a - y1a, h)
+            elif i == 3:  # bottom right
+                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, sw), min(sh, yc + h)
+                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+            img4[y1a:y2a, x1a:x2a] = img_resized[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+            padw = x1a - x1b
+            padh = y1a - y1b
+            anns = anns_list[i]
+
+            # for ann in anns:
+            #     bbox = ann['bbox']
+            #     bbox[0] = bbox[0] if bbox[0] > 0 else 0
+            #     bbox[1] = bbox[1] if bbox[1] > 0 else 0
+            #     img = img.astype(np.uint8)
+            #     cv2.rectangle(img, (int(bbox[0]), int(bbox[1])), (int(bbox[0]+bbox[2]), int(bbox[1]+bbox[3])), (0, 0, 255), 1)
+            # cv2.imshow('ori_img', img)
+            # cv2.waitKey(0)
+
+            for j in range(len(anns)):
+                bbox = np.zeros(4, dtype=np.float32)
+                bbox[0] = anns[j]['bbox'][0] * scale + padw  # x1
+                bbox[1] = anns[j]['bbox'][1] * scale + padh  # y1
+                bbox[2] = np.clip(anns[j]['bbox'][2] * scale + bbox[0], 0, sw)
+                bbox[3] = np.clip(anns[j]['bbox'][3] * scale + bbox[1], 0, sh)
+                bbox[0] = np.clip(bbox[0], 0, sw)  # x1
+                bbox[1] = np.clip(bbox[1], 0, sh)  # y1
+                # 如果目标长宽超过(1-drop_threshold)被剪裁掉了,就舍弃
+                drop_threshold = 0.65
+                if anns[j]['bbox'][2] * scale * drop_threshold > bbox[2] - bbox[0] or \
+                        anns[j]['bbox'][3] * scale * drop_threshold > bbox[3] - bbox[1]:
+                    continue
+
+                anns[j]['bbox'] = bbox
+                if anns[j]['bbox'][3] - anns[j]['bbox'][1] > 16 and anns[j]['bbox'][2] - anns[j]['bbox'][0] > 16:
+                    img4_anns.append(anns[j])
+                    track_ids.append(anns[j]['track_id'])
+                    centers.append((bbox[2:]+bbox[:2])/2)
+                    # cv2.rectangle(img4, (int(anns[j]['bbox'][0]), int(anns[j]['bbox'][1])),
+                    #               (int(anns[j]['bbox'][2]), int(anns[j]['bbox'][3])), (0, 0, 255), 1)
+                    # cv2.imshow('img4', img4)
+                    # cv2.waitKey(0)
+        inp = img4.astype(np.float32) / 255.
+        # if self.split == 'train' and not self.opt.no_color_aug:
+        # color_aug(self._data_rng, inp, self._eig_val, self._eig_vec)
+        inp = (inp - self.mean) / self.std
+        inp = inp.transpose(2, 0, 1)
+        return inp, img4, img4_anns, track_ids, centers
+
+    def __getitem__(self, indices):
+        if isinstance(indices, int):
+            indices = [indices] + [np.random.randint(0, len(self.images) - 1) for _ in range(3)]
+        img_list, anns_list = [], []
+        for i, index in enumerate(indices):
+            img, anns, img_info, img_path = self._load_data(index)
+            # print(i, ': ', img_info['file_name'])
+            ori_h, ori_w, c = img.shape
+            if np.random.random() < self.opt.flip:
+                img = img[:, ::-1, :]
+                anns = self._flip_anns(anns, ori_w)
+            img_list.append(img)
+            anns_list.append(anns)
+        img4_norm, img4, anns_img4, _, _ = self._mosaic(img_list, anns_list)
+        pre_img4_norm, pre_img4, pre_anns_img4, track_ids, pre_cts = self._mosaic(img_list, anns_list)
+
+        ret = {'image': img4_norm, 'pre_img': pre_img4_norm}
+        gt_det = {'bboxes': [], 'scores': [], 'clses': [], 'cts': []}
+        self._init_ret(ret, gt_det)
+
+        num_objs = min(len(anns_img4), self.max_objs)
+        for k in range(num_objs):
+            ann = anns_img4[k]
+            bbox = ann['bbox'] / self.opt.down_ratio  # 除以down_ratio后表示输出层的坐标
+            h, w = bbox[3]-bbox[1], bbox[2]-bbox[0]
+            cls_id = int(self.cat_ids[ann['category_id']])
+            if cls_id > self.opt.num_classes or cls_id <= -999:
+                continue
+            radius = gaussian_radius((math.ceil(h), math.ceil(w)))
+            radius = max(0, int(radius))
+            ct = np.array([(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2],
+                          dtype=np.float32)
+            ct_int = ct.astype(np.int32)
+            ret['cat'][k] = cls_id - 1
+            ret['mask'][k] = 1
+            if 'wh' in ret:
+                ret['wh'][k] = 1. * w, 1. * h
+                ret['wh_mask'][k] = 1
+            ret['ind'][k] = ct_int[1] * self.opt.output_w + ct_int[0]
+            ret['reg'][k] = ct - ct_int
+            ret['reg_mask'][k] = 1
+            draw_umich_gaussian(ret['hm'][cls_id - 1], ct_int, radius)
+
+            gt_det['bboxes'].append(
+                np.array([ct[0] - w / 2, ct[1] - h / 2,
+                          ct[0] + w / 2, ct[1] + h / 2], dtype=np.float32))
+            gt_det['scores'].append(1)
+            gt_det['clses'].append(cls_id - 1)
+            gt_det['cts'].append(ct)
+
+            if ann['track_id'] in track_ids:
+                pre_ct = pre_cts[track_ids.index(ann['track_id'])] / self.opt.down_ratio
+                ret['tracking_mask'][k] = 1
+                ret['tracking'][k] = pre_ct - ct_int
+                gt_det['tracking'].append(ret['tracking'][k])
+            else:
+                gt_det['tracking'].append(np.zeros(2, np.float32))
+        if self.opt.debug > 0:
+            gt_det = self._format_gt_det(gt_det)
+            meta = {'gt_det': gt_det}
+            ret['meta'] = meta
+
+        # for ann in anns_img4:
+        #     cv2.rectangle(img4, (int(ann['bbox'][0]), int(ann['bbox'][1])),
+        #                   (int(ann['bbox'][2]), int(ann['bbox'][3])), (0, 0, 255), 1)
+        # cv2.imshow('img4', img4)
+        #
+        # for ann in pre_anns_img4:
+        #     cv2.rectangle(pre_img4, (int(ann['bbox'][0]), int(ann['bbox'][1])),
+        #                   (int(ann['bbox'][2]), int(ann['bbox'][3])), (0, 0, 255), 1)
+        # cv2.imshow('pre_img4', pre_img4)
+        # cv2.waitKey(0)
+        return ret
+
+    def __getitem__1(self, index):
         opt = self.opt
         img, anns, img_info, img_path = self._load_data(index)
 
@@ -147,7 +292,7 @@ class GenericDataset(data.Dataset):
                 continue
             self._add_instance(
                 ret, gt_det, k, cls_id, bbox, bbox_amodal, ann, trans_output, aug_s,
-                calib, pre_cts, track_ids)
+                pre_cts, track_ids)
 
         if self.opt.debug > 0:
             gt_det = self._format_gt_det(gt_det)
@@ -156,6 +301,84 @@ class GenericDataset(data.Dataset):
                     'flipped': flipped}
             ret['meta'] = meta
         return ret
+
+    # def __getitem__(self, index):
+    #     opt = self.opt
+    #     img, anns, img_info, img_path = self._load_data(index)
+    #
+    #     height, width = img.shape[0], img.shape[1]
+    #     c = np.array([img.shape[1] / 2., img.shape[0] / 2.], dtype=np.float32)
+    #     s = max(img.shape[0], img.shape[1]) * 1.0 if not self.opt.not_max_crop \
+    #         else np.array([img.shape[1], img.shape[0]], np.float32)
+    #     aug_s, rot, flipped = 1, 0, 0
+    #     if self.split == 'train':
+    #         c, aug_s, rot = self._get_aug_param(c, s, width, height)
+    #         s = s * aug_s
+    #         if np.random.random() < opt.flip:
+    #             flipped = 1
+    #             img = img[:, ::-1, :]
+    #             anns = self._flip_anns(anns, width)
+    #
+    #     trans_input = get_affine_transform(
+    #         c, s, rot, [opt.input_w, opt.input_h])
+    #     trans_output = get_affine_transform(
+    #         c, s, rot, [opt.output_w, opt.output_h])
+    #     inp = self._get_input(img, trans_input, 'image')
+    #     ret = {'image': inp}
+    #     gt_det = {'bboxes': [], 'scores': [], 'clses': [], 'cts': []}
+    #
+    #     pre_cts, track_ids = None, None
+    #     if opt.tracking:
+    #         pre_image, pre_anns, frame_dist = self._load_pre_data(
+    #             img_info['video_id'], img_info['frame_id'],
+    #             img_info['sensor_id'] if 'sensor_id' in img_info else 1)
+    #         if flipped:
+    #             pre_image = pre_image[:, ::-1, :].copy()
+    #             pre_anns = self._flip_anns(pre_anns, width)
+    #         if opt.same_aug_pre and frame_dist != 0:
+    #             trans_input_pre = trans_input
+    #             trans_output_pre = trans_output
+    #         else:
+    #             c_pre, aug_s_pre, _ = self._get_aug_param(
+    #                 c, s, width, height, disturb=True)
+    #             s_pre = s * aug_s_pre
+    #             trans_input_pre = get_affine_transform(
+    #                 c_pre, s_pre, rot, [opt.input_w, opt.input_h])
+    #             trans_output_pre = get_affine_transform(
+    #                 c_pre, s_pre, rot, [opt.output_w, opt.output_h])
+    #         pre_img = self._get_input(pre_image, trans_input_pre, 'pre_img')
+    #         pre_hm, pre_cts, track_ids = self._get_pre_dets(
+    #             pre_anns, trans_input_pre, trans_output_pre)
+    #         ret['pre_img'] = pre_img
+    #         if opt.pre_hm:
+    #             ret['pre_hm'] = pre_hm
+    #
+    #     ### init samples
+    #     self._init_ret(ret, gt_det)
+    #     calib = self._get_calib(img_info, width, height)
+    #
+    #     num_objs = min(len(anns), self.max_objs)
+    #     for k in range(num_objs):
+    #         ann = anns[k]
+    #         cls_id = int(self.cat_ids[ann['category_id']])
+    #         if cls_id > self.opt.num_classes or cls_id <= -999:
+    #             continue
+    #         bbox, bbox_amodal = self._get_bbox_output(
+    #             ann['bbox'], trans_output, height, width)
+    #         if cls_id <= 0 or ('iscrowd' in ann and ann['iscrowd'] > 0):
+    #             self._mask_ignore_or_crowd(ret, cls_id, bbox)
+    #             continue
+    #         self._add_instance(
+    #             ret, gt_det, k, cls_id, bbox, bbox_amodal, ann, trans_output, aug_s,
+    #             calib, pre_cts, track_ids)
+    #
+    #     if self.opt.debug > 0:
+    #         gt_det = self._format_gt_det(gt_det)
+    #         meta = {'c': c, 's': s, 'gt_det': gt_det, 'img_id': img_info['id'],
+    #                 'img_path': img_path, 'calib': calib,
+    #                 'flipped': flipped}
+    #         ret['meta'] = meta
+    #     return ret
 
     def get_default_calib(self, width, height):
         calib = np.array([[self.rest_focal_length, 0, width / 2, 0],
@@ -437,7 +660,7 @@ class GenericDataset(data.Dataset):
 
     def _add_instance(
             self, ret, gt_det, k, cls_id, bbox, bbox_amodal, ann, trans_output,
-            aug_s, calib, pre_cts=None, track_ids=None):
+            aug_s, pre_cts=None, track_ids=None):
         h, w = bbox[3] - bbox[1], bbox[2] - bbox[0]
         if h <= 0 or w <= 0:
             return

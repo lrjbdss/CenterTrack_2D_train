@@ -112,13 +112,13 @@ class opts(object):
 
         # train
         self.parser.add_argument('--optim', default='adam')
-        self.parser.add_argument('--lr', type=float, default=0.0005,
+        self.parser.add_argument('--lr', type=float, default=0.001,
                                  help='learning rate for batch size 32.')
-        self.parser.add_argument('--lr_step', type=str, default='40,80,120',
+        self.parser.add_argument('--lr_step', type=str, default='20,40,60,80',
                                  help='drop learning rate by 10.')
         self.parser.add_argument('--save_point', type=str, default='90',
                                  help='when to save the model to disk.')
-        self.parser.add_argument('--num_epochs', type=int, default=140,
+        self.parser.add_argument('--num_epochs', type=int, default=90,
                                  help='total training epochs.')
         self.parser.add_argument('--milestones', type=list, default=[10, 40],
                                  help='MultiStepLR milestones.')
@@ -193,6 +193,8 @@ class opts(object):
         self.parser.add_argument('--aug_rot', type=float, default=0,
                                  help='probability of applying '
                                       'rotation augmentation.')
+        self.parser.add_argument('--mosaic', action='store_true',
+                                 help='mosaic data augment')
         self.parser.add_argument('--rotate', type=float, default=0,
                                  help='when not using random crop'
                                       'apply rotation augmentation.')
